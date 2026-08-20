@@ -1,5 +1,6 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsUUID } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsUUID, IsIn } from 'class-validator';
+import { BlogStatus } from '../enums/blog.enum';
 import { ListBlogsQueryDto } from './list-blogs.query.dto';
 
 export class ListMyBlogsQueryDto extends ListBlogsQueryDto {
@@ -11,12 +12,14 @@ export class ListMyBlogsQueryDto extends ListBlogsQueryDto {
   @IsUUID()
   userId?: string;
 
-  @ApiProperty({
-    name: 'user_id',
-    format: 'uuid',
-    description: 'Internal user id whose blogs should be returned',
-  })
+  @ApiPropertyOptional({ enum: BlogStatus })
   @IsOptional()
-  @IsUUID()
-  user_id?: string;
+  @IsIn([
+    BlogStatus.DRAFT,
+    BlogStatus.PENDING_REVIEW,
+    BlogStatus.APPROVED,
+    BlogStatus.REJECTED,
+    BlogStatus.PUBLISHED,
+  ])
+  declare status?: BlogStatus;
 }

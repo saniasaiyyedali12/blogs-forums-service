@@ -9,7 +9,7 @@ import { DatabaseService } from '../../database/database.service';
 import { blogLikes } from '../../database/schema/blog-likes.schema';
 import { blogs } from '../../database/schema/blogs.schema';
 import { media } from '../../database/schema/media.schema';
-import type { BlogStatus } from './dto/create-blog.dto';
+import { BlogStatus } from './dto/create-blog.dto';
 
 export type ListBlogsParams = {
   limit: number;
@@ -47,7 +47,10 @@ export class BlogsRepository {
   }) {
     const [record] = await this.database.db
       .insert(blogs)
-      .values(data)
+      .values({
+        ...data,
+        status: data.status as 'DRAFT' | 'PUBLISHED',
+      })
       .returning();
     return record;
   }
@@ -104,7 +107,16 @@ export class BlogsRepository {
     const conditions: SQL[] = [eq(blogs.isActive, true)];
 
     if (params.status) {
-      conditions.push(eq(blogs.status, params.status));
+      if (
+        params.status === BlogStatus.DRAFT ||
+        params.status === BlogStatus.PUBLISHED
+      ) {
+        conditions.push(
+          eq(blogs.status, params.status as 'DRAFT' | 'PUBLISHED'),
+        );
+      } else {
+        return [];
+      }
     }
 
     if (params.userId) {
@@ -169,6 +181,7 @@ export class BlogsRepository {
       .update(blogs)
       .set({
         ...data,
+        status: data.status as 'DRAFT' | 'PUBLISHED' | undefined,
         updatedAt: new Date(),
       })
       .where(and(eq(blogs.id, id), eq(blogs.isActive, true)))

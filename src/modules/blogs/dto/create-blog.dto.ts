@@ -11,8 +11,10 @@ import {
   MaxLength,
 } from 'class-validator';
 
+import { BlogStatus } from '../enums/blog.enum';
+
 export const BLOG_STATUSES = ['DRAFT', 'PUBLISHED'] as const;
-export type BlogStatus = (typeof BLOG_STATUSES)[number];
+export { BlogStatus };
 
 export class CreateBlogDto {
   @ApiProperty({ example: 'Getting started with blogs' })
