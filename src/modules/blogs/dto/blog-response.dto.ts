@@ -49,6 +49,12 @@ export class BlogResponseDto {
   @ApiProperty()
   likeCount: number;
 
+  @ApiProperty()
+  commentCount: number;
+
+  @ApiProperty()
+  analyticsCount: number;
+
   @ApiPropertyOptional()
   isLikedByCurrentUser?: boolean;
 
@@ -62,15 +68,16 @@ export class BlogResponseDto {
   updatedAt: string;
 
   static fromEntity(
-    row: BlogRow,
+    row: BlogRow & { commentCount?: number; viewsCount?: number },
     extras?: {
       thumbnailUrl?: string | null;
       isLikedByCurrentUser?: boolean;
+      userId?: string;
     },
   ): BlogResponseDto {
     const dto: BlogResponseDto = {
       id: row.id,
-      userId: row.userId,
+      userId: extras?.userId ?? row.userId,
       title: row.title,
       slug: row.slug,
       content: row.content,
@@ -82,6 +89,8 @@ export class BlogResponseDto {
       status: row.status as BlogStatus,
       readingTime: row.readingTime,
       likeCount: row.likeCount,
+      commentCount: row.commentCount ?? 0,
+      analyticsCount: row.viewsCount ?? 0,
       isActive: row.isActive,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),

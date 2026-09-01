@@ -7,7 +7,7 @@ import { BlogsRepository } from '../blogs/blogs.repository';
 import { CommentsRepository } from '../comments/comments.repository';
 import { ForumCommentsRepository } from '../forums/forum-comments.repository';
 import { ForumsRepository } from '../forums/forums.repository';
-import type { AppUserIdentity } from '../users/users.service';
+import { UsersService, type AppUserIdentity } from '../users/users.service';
 import { ReportReason, ReportTargetType } from './enums/report.enum';
 import { ReportsRepository } from './reports.repository';
 import { ReportsService } from './reports.service';
@@ -60,7 +60,7 @@ describe('ReportsService', () => {
       commentsRepository as unknown as CommentsRepository,
       forumsRepository as unknown as ForumsRepository,
       forumCommentsRepository as unknown as ForumCommentsRepository,
-      usersService,
+      usersService as unknown as UsersService,
     );
   });
 

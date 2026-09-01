@@ -17,11 +17,6 @@ export class ListBlogsQueryDto {
   @IsString()
   cursor?: string;
 
-  @ApiPropertyOptional({ enum: BLOG_STATUSES })
-  @IsOptional()
-  @IsIn(BLOG_STATUSES)
-  status?: BlogStatus;
-
   @ApiPropertyOptional({
     description:
       'Full-text search across blog title and content (PostgreSQL websearch_to_tsquery)',

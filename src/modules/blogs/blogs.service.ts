@@ -40,7 +40,7 @@ export class BlogsService {
     private readonly redis: RedisService,
     @Inject(MediaService)
     private readonly mediaService: MediaService,
-  ) {}
+  ) { }
 
   async create(identity: AppUserIdentity, dto: CreateBlogDto) {
     const user = await this.usersService.require(identity, true);
@@ -72,8 +72,10 @@ export class BlogsService {
       });
 
       await this.invalidateListCaches();
+      await this.invalidateCountsCache(user.id);
       return BlogResponseDto.fromEntity(record, {
         thumbnailUrl: record.thumbnailUrl,
+        userId: user.appUserId,
       });
     } catch (error) {
       if (isUniqueViolation(error)) {
@@ -90,7 +92,7 @@ export class BlogsService {
     const cacheKey = this.listCacheKey({
       limit,
       cursor: query.cursor ?? null,
-      status: query.status ?? null,
+      status: BlogStatus.PUBLISHED ?? null,
       userId: null,
       search: search ?? null,
     });
@@ -107,7 +109,7 @@ export class BlogsService {
     const rows = await this.blogsRepository.listActive({
       limit,
       cursor,
-      status: query.status,
+      status: [BlogStatus.PUBLISHED],
       search,
     });
 
@@ -148,23 +150,28 @@ export class BlogsService {
     const cached = await this.redis.getJson<{
       items: BlogResponseDto[];
       nextCursor: string | null;
+      counts: Record<BlogStatus, number> & { TOTAL: number };
     }>(cacheKey);
 
     if (cached) {
       return cached;
     }
 
-    const rows = await this.blogsRepository.listActive({
-      limit,
-      cursor,
-      status: query.status,
-      userId: user.id,
-      search,
-    });
+    const [rows, counts] = await Promise.all([
+      this.blogsRepository.listActive({
+        limit,
+        cursor,
+        status: query.status ? [query.status] : [BlogStatus.DRAFT, BlogStatus.APPROVED, BlogStatus.PENDING_REVIEW, BlogStatus.REJECTED, BlogStatus.PUBLISHED],
+        userId: user.id,
+        search,
+      }),
+      this.getStatusCounts(user.id),
+    ]);
 
     const page = sliceCursorPage(rows, limit);
     const result = {
       items: await Promise.all(page.items.map((row) => this.toResponse(row))),
+      counts,
       nextCursor: page.nextCursor,
     };
 
@@ -178,6 +185,10 @@ export class BlogsService {
     if (!identity) {
       const cached = await this.redis.getJson<BlogResponseDto>(cacheKey);
       if (cached) {
+        // Track guest view in background asynchronously and invalidate cache
+        this.blogsRepository.createView(id, null)
+          .then(() => this.invalidateBlogCaches(id))
+          .catch(() => { });
         return cached;
       }
     }
@@ -188,15 +199,27 @@ export class BlogsService {
     }
 
     let isLikedByCurrentUser: boolean | undefined;
+    let viewerUserId: string | null = null;
+
     if (identity) {
-      const user = await this.usersService.resolve(identity);
+      const user = await this.usersService.resolve(identity, true);
       if (user) {
+        viewerUserId = user.id;
         const like = await this.blogsRepository.findLikeByBlogAndUser(
           id,
           user.id,
         );
         isLikedByCurrentUser = !!like;
       }
+    }
+
+    // Record view if viewer is not the author
+    if (viewerUserId !== record.userId) {
+      await this.blogsRepository.createView(id, viewerUserId);
+      if (record.viewsCount !== undefined) {
+        record.viewsCount += 1;
+      }
+      await this.invalidateBlogCaches(id);
     }
 
     const result = await this.toResponse(record, isLikedByCurrentUser);
@@ -207,6 +230,16 @@ export class BlogsService {
 
     return result;
   }
+
+  async getViews(blogId: string, identity: AppUserIdentity) {
+    await this.requireOwnedBlog(
+      blogId,
+      identity,
+      'You can only view analytics for your own blogs.',
+    );
+    return this.blogsRepository.getViewEvents(blogId);
+  }
+
 
   async update(id: string, identity: AppUserIdentity, dto: UpdateBlogDto) {
     const hasUpdate = [
@@ -276,8 +309,10 @@ export class BlogsService {
       }
 
       await this.invalidateBlogCaches(id);
+      await this.invalidateCountsCache(blog.userId);
       return BlogResponseDto.fromEntity(record, {
         thumbnailUrl: await this.resolveThumbnailUrl(record.thumbnailMediaId),
+        userId: identity.appUserId,
       });
     } catch (error) {
       if (isUniqueViolation(error)) {
@@ -288,7 +323,7 @@ export class BlogsService {
   }
 
   async softDelete(id: string, identity: AppUserIdentity) {
-    await this.requireOwnedBlog(
+    const blog = await this.requireOwnedBlog(
       id,
       identity,
       'You are not allowed to delete this blog',
@@ -300,10 +335,38 @@ export class BlogsService {
     }
 
     await this.invalidateBlogCaches(id);
+    await this.invalidateCountsCache(blog.userId);
     return {
       id: record.id,
       isActive: record.isActive,
     };
+  }
+
+  async publish(id: string, identity: AppUserIdentity) {
+    const blog = await this.requireOwnedBlog(
+      id,
+      identity,
+      'You are not allowed to publish this blog',
+    );
+
+    if (blog.status !== BlogStatus.APPROVED) {
+      throw new BadRequestException('Only approved blogs can be published');
+    }
+
+    const record = await this.blogsRepository.update(id, {
+      status: BlogStatus.PUBLISHED,
+    });
+
+    if (!record) {
+      throw new NotFoundException('Blog not found');
+    }
+
+    await this.invalidateBlogCaches(id);
+    await this.invalidateCountsCache(blog.userId);
+    return BlogResponseDto.fromEntity(record, {
+      thumbnailUrl: await this.resolveThumbnailUrl(record.thumbnailMediaId),
+      userId: identity.appUserId,
+    });
   }
 
   async clearBlogCache(blogId?: string) {
@@ -387,5 +450,21 @@ export class BlogsService {
 
   private async invalidateListCaches() {
     await this.redis.delByPattern('blogs:list:*');
+  }
+
+  async getStatusCounts(userId: string): Promise<Record<BlogStatus, number> & { TOTAL: number }> {
+    const cacheKey = `blogs:counts:${userId}`;
+    const cached = await this.redis.getJson<Record<BlogStatus, number> & { TOTAL: number }>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const counts = await this.blogsRepository.getStatusCounts(userId);
+    await this.redis.setJson(cacheKey, counts, BLOG_CACHE_TTL_SECONDS);
+    return counts;
+  }
+
+  private async invalidateCountsCache(userId: string) {
+    await this.redis.del(`blogs:counts:${userId}`);
   }
 }

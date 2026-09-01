@@ -13,6 +13,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { media } from './media.schema';
 import { users } from './users.schema';
+import { BlogStatus } from '../../modules/blogs/enums/blog.enum';
 
 const tsvector = customType<{ data: string }>({
   dataType() {
@@ -20,11 +21,7 @@ const tsvector = customType<{ data: string }>({
   },
 });
 
-export const blogStatusEnum = pgEnum('blog_status', [
-  'DRAFT',
-  'PENDING_REVIEW',
-  'PUBLISHED',
-]);
+export const blogStatusEnum = pgEnum('blog_status', BlogStatus);
 
 export const blogs = pgTable(
   'blogs',
@@ -43,7 +40,7 @@ export const blogs = pgTable(
     tags: text('tags').array(),
     links: text('links').array(),
     mediaUrls: text('media_urls').array(),
-    status: blogStatusEnum('status').notNull().default('DRAFT'),
+    status: blogStatusEnum('status').notNull().default(BlogStatus.DRAFT),
     readingTime: integer('reading_time'),
     likeCount: integer('like_count').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),

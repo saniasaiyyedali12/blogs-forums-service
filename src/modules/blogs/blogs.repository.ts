@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, ne, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import type { InferSelectModel } from 'drizzle-orm';
 import {
   buildCursorCondition,
@@ -9,12 +9,14 @@ import { DatabaseService } from '../../database/database.service';
 import { blogLikes } from '../../database/schema/blog-likes.schema';
 import { blogs } from '../../database/schema/blogs.schema';
 import { media } from '../../database/schema/media.schema';
+import { blogViews } from '../../database/schema/blog-views.schema';
+import { users } from '../../database/schema/users.schema';
 import { BlogStatus } from './dto/create-blog.dto';
 
 export type ListBlogsParams = {
   limit: number;
   cursor?: CursorPayload;
-  status?: BlogStatus;
+  status?: BlogStatus[];
   userId?: string;
   search?: string;
 };
@@ -25,6 +27,8 @@ export type BlogWithThumbnail = BlogRow & {
   thumbnailBucketName: string | null;
   thumbnailObjectKey: string | null;
   thumbnailVisibility: string | null;
+  commentCount?: number;
+  viewsCount?: number;
 };
 
 @Injectable()
@@ -32,7 +36,7 @@ export class BlogsRepository {
   constructor(
     @Inject(DatabaseService)
     private readonly database: DatabaseService,
-  ) {}
+  ) { }
 
   async create(data: {
     userId: string;
@@ -51,7 +55,7 @@ export class BlogsRepository {
       .insert(blogs)
       .values({
         ...data,
-        status: data.status as 'DRAFT' | 'PUBLISHED',
+        status: data.status as BlogStatus.DRAFT | BlogStatus.PENDING_REVIEW,
       })
       .returning();
 
@@ -85,12 +89,24 @@ export class BlogsRepository {
         thumbnailBucketName: media.bucketName,
         thumbnailObjectKey: media.objectKey,
         thumbnailVisibility: media.visibility,
+        appUserId: users.appUserId,
+        commentCount: sql<number>`(
+          SELECT count(*)::int 
+          FROM comments 
+          WHERE comments.blog_id = ${blogs.id} AND comments.is_active = true
+        )`.as('comment_count'),
+        viewsCount: sql<number>`(
+          SELECT count(*)::int 
+          FROM blog_views 
+          WHERE blog_views.blog_id = ${blogs.id}
+        )`.as('views_count'),
       })
       .from(blogs)
       .leftJoin(
         media,
         and(eq(blogs.thumbnailMediaId, media.id), eq(media.isDeleted, false)),
       )
+      .leftJoin(users, eq(blogs.userId, users.id))
       .where(and(eq(blogs.id, id), eq(blogs.isActive, true)))
       .limit(1);
 
@@ -122,16 +138,7 @@ export class BlogsRepository {
     const conditions: SQL[] = [eq(blogs.isActive, true)];
 
     if (params.status) {
-      if (
-        params.status === BlogStatus.DRAFT ||
-        params.status === BlogStatus.PUBLISHED
-      ) {
-        conditions.push(
-          eq(blogs.status, params.status as 'DRAFT' | 'PUBLISHED'),
-        );
-      } else {
-        return [];
-      }
+      conditions.push(inArray(blogs.status, params.status as BlogStatus[]));
     }
 
     if (params.userId) {
@@ -161,12 +168,24 @@ export class BlogsRepository {
         thumbnailBucketName: media.bucketName,
         thumbnailObjectKey: media.objectKey,
         thumbnailVisibility: media.visibility,
+        appUserId: users.appUserId,
+        commentCount: sql<number>`(
+          SELECT count(*)::int 
+          FROM comments 
+          WHERE comments.blog_id = ${blogs.id} AND comments.is_active = true
+        )`.as('comment_count'),
+        viewsCount: sql<number>`(
+          SELECT count(*)::int 
+          FROM blog_views 
+          WHERE blog_views.blog_id = ${blogs.id}
+        )`.as('views_count'),
       })
       .from(blogs)
       .leftJoin(
         media,
         and(eq(blogs.thumbnailMediaId, media.id), eq(media.isDeleted, false)),
       )
+      .leftJoin(users, eq(blogs.userId, users.id))
       .where(and(...conditions))
       .orderBy(desc(blogs.createdAt), desc(blogs.id))
       .limit(params.limit + 1);
@@ -196,7 +215,7 @@ export class BlogsRepository {
       .update(blogs)
       .set({
         ...data,
-        status: data.status as 'DRAFT' | 'PUBLISHED' | undefined,
+        status: data.status as any,
         updatedAt: new Date(),
       })
       .where(and(eq(blogs.id, id), eq(blogs.isActive, true)))
@@ -222,17 +241,72 @@ export class BlogsRepository {
     return record;
   }
 
+  async createView(blogId: string, viewerUserId: string | null) {
+    await this.database.db.insert(blogViews).values({
+      blogId,
+      viewerUserId,
+    });
+  }
+
+  async getViewEvents(blogId: string) {
+    const rows = await this.database.db
+      .select({
+        viewerUserId: users.appUserId,
+        createdAt: blogViews.createdAt,
+      })
+      .from(blogViews)
+      .leftJoin(users, eq(blogViews.viewerUserId, users.id))
+      .where(eq(blogViews.blogId, blogId));
+    return rows;
+  }
+
+  async getStatusCounts(userId: string): Promise<Record<BlogStatus, number> & { TOTAL: number }> {
+    const result = await this.database.db
+      .select({
+        status: blogs.status,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(blogs)
+      .where(and(eq(blogs.userId, userId), eq(blogs.isActive, true)))
+      .groupBy(blogs.status);
+
+    const counts = {
+      [BlogStatus.DRAFT]: 0,
+      [BlogStatus.PENDING_REVIEW]: 0,
+      [BlogStatus.APPROVED]: 0,
+      [BlogStatus.REJECTED]: 0,
+      [BlogStatus.PUBLISHED]: 0,
+      TOTAL: 0,
+    };
+
+    for (const row of result) {
+      const status = row.status as BlogStatus;
+      if (status in counts) {
+        counts[status] = row.count;
+        counts.TOTAL += row.count;
+      }
+    }
+
+    return counts;
+  }
+
   private toBlogWithThumbnail(row: {
     blog: BlogRow;
     thumbnailBucketName: string | null;
     thumbnailObjectKey: string | null;
     thumbnailVisibility: string | null;
+    commentCount?: number;
+    viewsCount?: number;
+    appUserId: string | null;
   }): BlogWithThumbnail {
     return {
       ...row.blog,
+      userId: row.appUserId ?? row.blog.userId,
       thumbnailBucketName: row.thumbnailBucketName,
       thumbnailObjectKey: row.thumbnailObjectKey,
       thumbnailVisibility: row.thumbnailVisibility,
+      commentCount: row.commentCount,
+      viewsCount: row.viewsCount,
     };
   }
 }

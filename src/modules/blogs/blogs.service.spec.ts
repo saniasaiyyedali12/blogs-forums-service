@@ -5,6 +5,7 @@ import type { AppUserIdentity } from '../users/users.service';
 import { UsersService } from '../users/users.service';
 import { BlogsRepository } from './blogs.repository';
 import { BlogsService } from './blogs.service';
+import { BlogStatus } from './enums/blog.enum';
 
 const identity: AppUserIdentity = {
   appType: 'INFOCALLING',
@@ -26,6 +27,8 @@ describe('BlogsService', () => {
     findBySlugExcludingId: jest.fn(),
     update: jest.fn(),
     softDelete: jest.fn(),
+    getStatusCounts: jest.fn(),
+    createView: jest.fn(),
   };
 
   const usersService = {
@@ -109,7 +112,7 @@ describe('BlogsService', () => {
   });
 
   it('creates an explicit incomplete DRAFT', async () => {
-    const result = await service.create(identity, { status: 'DRAFT' });
+    const result = await service.create(identity, { status: BlogStatus.DRAFT });
     expect(result.status).toBe('DRAFT');
     expect(blogsRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -122,7 +125,7 @@ describe('BlogsService', () => {
   });
 
   it('creates a DRAFT with only title', async () => {
-    await service.create(identity, { title: 'My Draft', status: 'DRAFT' });
+    await service.create(identity, { title: 'My Draft', status: BlogStatus.DRAFT });
     expect(blogsRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'My Draft',
@@ -138,7 +141,7 @@ describe('BlogsService', () => {
       title: 'Hello',
       slug: 'hello',
       content: 'Complete body',
-      status: 'PENDING_REVIEW',
+      status: BlogStatus.PENDING_REVIEW,
       links: ['https://example.com'],
     });
 
@@ -186,7 +189,7 @@ describe('BlogsService', () => {
       title: 'Hello',
       slug: 'hello',
       content: 'Complete body',
-      status: 'PENDING_REVIEW',
+      status: BlogStatus.PENDING_REVIEW,
     });
 
     expect(blogsRepository.update).toHaveBeenCalledWith(
@@ -239,5 +242,24 @@ describe('BlogsService', () => {
     await expect(service.listMine(identity, {})).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  it('returns my-blogs listing with counts', async () => {
+    usersService.require.mockResolvedValue({ id: userId, appUserId: 'app-user-1' });
+    redis.getJson.mockResolvedValue(null);
+    blogsRepository.listActive.mockResolvedValue([]);
+    const mockCounts = {
+      DRAFT: 1,
+      PENDING_REVIEW: 2,
+      APPROVED: 2,
+      REJECTED: 0,
+      PUBLISHED: 0,
+      TOTAL: 5,
+    };
+    blogsRepository.getStatusCounts.mockResolvedValue(mockCounts);
+
+    const result = await service.listMine(identity, { userId: 'app-user-1' });
+    expect(result.counts).toEqual(mockCounts);
+    expect(blogsRepository.getStatusCounts).toHaveBeenCalledWith(userId);
   });
 });

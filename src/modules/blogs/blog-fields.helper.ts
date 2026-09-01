@@ -3,12 +3,11 @@ import { BlogStatus } from './enums/blog.enum';
 export const BLOG_STATUSES = [
   BlogStatus.DRAFT,
   BlogStatus.PENDING_REVIEW,
-  BlogStatus.PUBLISHED,
 ] as const;
 
 export function requiresCompleteBlogFields(status?: BlogStatus) {
   return (
-    status === BlogStatus.PENDING_REVIEW || status === BlogStatus.PUBLISHED
+    status === BlogStatus.PENDING_REVIEW || status === BlogStatus.DRAFT
   );
 }
 

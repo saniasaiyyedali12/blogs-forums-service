@@ -133,4 +133,39 @@ export class BlogsController {
       await this.blogsService.softDelete(id, identity),
     );
   }
+
+  @Post(':id/publish')
+  @HttpCode(HttpStatus.OK)
+  @ApiUserIdentityHeaders()
+  @ApiOperation({ summary: 'Publish an owned blog' })
+  @ApiNotFoundResponse({ description: 'Blog not found' })
+  @ApiForbiddenResponse({ description: 'Not the blog owner' })
+  @ApiBadRequestResponse({ description: 'Only approved blogs can be published' })
+  async publish(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UserIdentity() identity: AppUserIdentity,
+  ) {
+    return apiSuccess(
+      200,
+      'Blog published successfully',
+      await this.blogsService.publish(id, identity),
+    );
+  }
+
+  @Get(':id/views')
+  @ApiUserIdentityHeaders()
+  @ApiOperation({ summary: 'Get view events for a blog' })
+  @ApiNotFoundResponse({ description: 'Blog not found' })
+  @ApiForbiddenResponse({ description: 'Not the blog owner' })
+  async getViews(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UserIdentity() identity: AppUserIdentity,
+  ) {
+    return apiSuccess(
+      200,
+      'Blog views retrieved successfully',
+      await this.blogsService.getViews(id, identity),
+    );
+  }
+
 }
