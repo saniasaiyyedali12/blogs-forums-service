@@ -6,13 +6,14 @@ import {
 } from '../../common/helpers/cursor-pagination.helper';
 import { DatabaseService } from '../../database/database.service';
 import { forums } from '../../database/schema/forums.schema';
+import { users } from 'src/database/schema/users.schema';
 
 @Injectable()
 export class ForumsRepository {
   constructor(
     @Inject(DatabaseService)
     private readonly database: DatabaseService,
-  ) {}
+  ) { }
 
   async create(data: {
     userId: string;
@@ -80,9 +81,23 @@ export class ForumsRepository {
     }
 
     return this.database.db
-      .select()
+      .select({
+        id: forums.id,
+        title: forums.title,
+        content: forums.content,
+        category: forums.category,
+        subCategory: forums.subCategory,
+        mediaId: forums.mediaId,
+        mediaUrl: forums.mediaUrl,
+        isAnonymous: forums.isAnonymous,
+        createdAt: forums.createdAt,
+        updatedAt: forums.updatedAt,
+        userId: users.appUserId,
+
+      })
       .from(forums)
       .where(and(...conditions))
+      .leftJoin(users, eq(forums.userId, users.id))
       .orderBy(desc(forums.createdAt), desc(forums.id))
       .limit(params.limit + 1);
   }

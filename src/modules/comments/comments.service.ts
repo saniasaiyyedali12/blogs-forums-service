@@ -51,7 +51,7 @@ export class CommentsService {
           'Parent comment does not belong to this blog',
         );
       }
-      parentCommentId = parent.id;
+      parentCommentId = parent.parentCommentId ?? parent.id;
       isReply = true;
     }
 

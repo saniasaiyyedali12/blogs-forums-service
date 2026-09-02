@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
@@ -185,10 +186,6 @@ export class BlogsService {
     if (!identity) {
       const cached = await this.redis.getJson<BlogResponseDto>(cacheKey);
       if (cached) {
-        // Track guest view in background asynchronously and invalidate cache
-        this.blogsRepository.createView(id, null)
-          .then(() => this.invalidateBlogCaches(id))
-          .catch(() => { });
         return cached;
       }
     }
@@ -211,15 +208,6 @@ export class BlogsService {
         );
         isLikedByCurrentUser = !!like;
       }
-    }
-
-    // Record view if viewer is not the author
-    if (viewerUserId !== record.userId) {
-      await this.blogsRepository.createView(id, viewerUserId);
-      if (record.viewsCount !== undefined) {
-        record.viewsCount += 1;
-      }
-      await this.invalidateBlogCaches(id);
     }
 
     const result = await this.toResponse(record, isLikedByCurrentUser);
@@ -466,5 +454,84 @@ export class BlogsService {
 
   private async invalidateCountsCache(userId: string) {
     await this.redis.del(`blogs:counts:${userId}`);
+  }
+
+  async recordViewByViewer(
+    blogId: string,
+    deviceId?: string,
+    identity?: AppUserIdentity,
+  ): Promise<{ recorded: boolean }> {
+    const blog = await this.blogsRepository.findActiveById(blogId);
+    if (!blog) {
+      throw new NotFoundException('Blog not found');
+    }
+
+    const trimmedDeviceId = deviceId?.trim();
+    if (trimmedDeviceId && trimmedDeviceId.length > 255) {
+      throw new BadRequestException('x-device-id header must not exceed 255 characters');
+    }
+
+    const user = identity ? await this.usersService.resolve(identity) : null;
+
+    if (!user && !trimmedDeviceId) {
+      throw new BadRequestException('x-device-id header is required for guest users');
+    }
+
+    // Author exclusion
+    if (user && user.id === blog.userId) {
+      return { recorded: false };
+    }
+
+    const redisKey = user
+      ? `blog:viewed:user:${blogId}:${user.id}`
+      : `blog:viewed:device:${blogId}:${trimmedDeviceId}`;
+
+    try {
+      const cached = await this.redis.getJson<string>(redisKey);
+      if (cached) {
+        return { recorded: false };
+      }
+    } catch (redisError) {
+      const logger = new Logger(BlogsService.name);
+      logger.warn(`Redis check failed for key ${redisKey}: ${redisError}`);
+    }
+
+    if (user && trimmedDeviceId) {
+      // Guest -> Logged-in Transition
+      const { converted } = await this.blogsRepository.convertGuestViewToUserView({
+        blogId,
+        viewerUserId: user.id,
+        viewerDeviceId: trimmedDeviceId,
+      });
+
+      if (converted) {
+        try {
+          await this.redis.setJson(redisKey, '1', 86400 * 30);
+        } catch (redisError) {
+          const logger = new Logger(BlogsService.name);
+          logger.warn(`Redis set failed for key ${redisKey}: ${redisError}`);
+        }
+        return { recorded: false };
+      }
+    }
+
+    const { inserted } = await this.blogsRepository.createView({
+      blogId,
+      viewerUserId: user ? user.id : null,
+      viewerDeviceId: trimmedDeviceId ?? null,
+    });
+
+    try {
+      await this.redis.setJson(redisKey, '1', 86400 * 30);
+    } catch (redisError) {
+      const logger = new Logger(BlogsService.name);
+      logger.warn(`Redis set failed for key ${redisKey}: ${redisError}`);
+    }
+
+    if (inserted) {
+      await this.invalidateBlogCaches(blogId).catch(() => {});
+    }
+
+    return { recorded: inserted };
   }
 }

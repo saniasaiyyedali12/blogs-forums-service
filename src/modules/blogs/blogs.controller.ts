@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -168,4 +169,18 @@ export class BlogsController {
     );
   }
 
+  @Post(':id/view')
+  @HttpCode(HttpStatus.OK)
+  @ApiOptionalUserIdentityHeaders()
+  @ApiOperation({ summary: 'Record a unique view for a blog' })
+  @ApiNotFoundResponse({ description: 'Blog not found' })
+  @ApiBadRequestResponse({ description: 'x-device-id header missing or invalid' })
+  async recordView(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-device-id') deviceId?: string,
+    @OptionalUserIdentity() identity?: AppUserIdentity,
+  ) {
+    const result = await this.blogsService.recordViewByViewer(id, deviceId, identity);
+    return apiSuccess(200, 'View processed successfully', result);
+  }
 }

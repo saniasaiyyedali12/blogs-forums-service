@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from 'drizzle-orm';
 import type { InferSelectModel } from 'drizzle-orm';
 import {
   buildCursorCondition,
@@ -241,11 +241,46 @@ export class BlogsRepository {
     return record;
   }
 
-  async createView(blogId: string, viewerUserId: string | null) {
-    await this.database.db.insert(blogViews).values({
-      blogId,
-      viewerUserId,
-    });
+  async createView(params: {
+    blogId: string;
+    viewerUserId?: string | null;
+    viewerDeviceId?: string | null;
+  }): Promise<{ inserted: boolean }> {
+    const result = await this.database.db
+      .insert(blogViews)
+      .values({
+        blogId: params.blogId,
+        viewerUserId: params.viewerUserId ?? null,
+        viewerDeviceId: params.viewerDeviceId ?? null,
+      })
+      .onConflictDoNothing()
+      .returning({ id: blogViews.id });
+
+    return {
+      inserted: result.length > 0,
+    };
+  }
+
+  async convertGuestViewToUserView(params: {
+    blogId: string;
+    viewerUserId: string;
+    viewerDeviceId: string;
+  }): Promise<{ converted: boolean }> {
+    const result = await this.database.db
+      .update(blogViews)
+      .set({ viewerUserId: params.viewerUserId })
+      .where(
+        and(
+          eq(blogViews.blogId, params.blogId),
+          eq(blogViews.viewerDeviceId, params.viewerDeviceId),
+          isNull(blogViews.viewerUserId),
+        ),
+      )
+      .returning({ id: blogViews.id });
+
+    return {
+      converted: result.length > 0,
+    };
   }
 
   async getViewEvents(blogId: string) {

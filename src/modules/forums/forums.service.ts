@@ -179,7 +179,7 @@ export class ForumsService {
           'Parent comment does not belong to this forum',
         );
       }
-      parentCommentId = parent.id;
+      parentCommentId = parent.parentCommentId ?? parent.id;
       isReply = true;
     }
 

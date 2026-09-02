@@ -109,7 +109,7 @@ describe('ForumsService', () => {
       parentCommentId: null,
       isReply: false,
     });
-    expect(comment.id).toBe(commentId);
+    expect(comment?.id).toBe(commentId);
   });
 
   it('creates a reply using parentCommentId', async () => {
